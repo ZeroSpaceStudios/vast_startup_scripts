@@ -110,6 +110,8 @@ fi
 
 echo "Setup complete!"
 
-# Start ComfyUI
+# Start ComfyUI in background
 cd "$WORKSPACE/ComfyUI"
-python main.py --listen 0.0.0.0 --port 8188
+nohup python main.py --listen 0.0.0.0 --port 8188 > /workspace/comfyui.log 2>&1 &
+echo "ComfyUI started in background (PID: $!)"
+echo "Logs: /workspace/comfyui.log"
