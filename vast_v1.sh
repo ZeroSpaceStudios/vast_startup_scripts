@@ -3,10 +3,6 @@ set -e
 
 echo "=== Custom ComfyUI Setup ==="
 
-if [ -d "/venv/main" ]; then
-    source /venv/main/bin/activate
-fi
-
 # Use WORKSPACE if set, otherwise default to /workspace
 WORKSPACE=${WORKSPACE:-/workspace}
 mkdir -p "$WORKSPACE"
@@ -58,10 +54,6 @@ cd "$WORKSPACE/ComfyUI"
 # Install ComfyUI requirements
 echo "Installing ComfyUI dependencies..."
 pip install -r requirements.txt --no-cache-dir
-
-# Install SageAttention
-echo "Installing SageAttention..."
-pip install sageattention --no-cache-dir
 
 # ============================================
 # Install Custom Nodes
