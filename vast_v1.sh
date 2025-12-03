@@ -41,6 +41,7 @@ CUSTOM_NODES=(
 #   bucket-name/comfy_models/upscale_models/
 # B2_BUCKET is set via vast.ai environment variables
 B2_MODELS_PATH="comfy_models"
+B2_WORKFLOWS_PATH="comfy_workflows"
 
 # Install B2 CLI
 echo "Installing B2 CLI..."
@@ -129,8 +130,28 @@ if [ -n "$B2_BUCKET" ]; then
     done
 
     echo "=== Model Sync Complete ==="
+
+    # ============================================
+    # Sync Workflows from B2
+    # ============================================
+    echo ""
+    echo "=== Syncing Workflows from B2 ==="
+    WORKFLOWS_DIR="$WORKSPACE/ComfyUI/user/default/workflows"
+    mkdir -p "$WORKFLOWS_DIR"
+    echo "Source: b2://$B2_BUCKET/$B2_WORKFLOWS_PATH"
+    echo "Dest:   $WORKFLOWS_DIR"
+
+    echo "Files in bucket:"
+    b2 ls "b2://$B2_BUCKET/$B2_WORKFLOWS_PATH" 2>/dev/null || echo "  (empty or not found)"
+
+    echo "Syncing..."
+    b2 sync "b2://$B2_BUCKET/$B2_WORKFLOWS_PATH" "$WORKFLOWS_DIR" || true
+
+    echo "Local workflows after sync:"
+    ls -lh "$WORKFLOWS_DIR" 2>/dev/null || echo "  (empty)"
+    echo "=== Workflow Sync Complete ==="
 else
-    echo "Skipping B2 model sync (B2_BUCKET not configured)"
+    echo "Skipping B2 sync (B2_BUCKET not configured)"
 fi
 
 ELAPSED=$((SECONDS - START_TIME))
@@ -142,6 +163,23 @@ echo "============================================"
 echo "Setup complete! (took ${MINUTES}m ${SECS}s)"
 echo "============================================"
 
+# Create helper script for restarting ComfyUI
+cat > "$WORKSPACE/ComfyUI/start_comfy.sh" << 'SCRIPT'
+#!/bin/bash
+cd /workspace/ComfyUI
+if pgrep -f "python main.py" > /dev/null; then
+    echo "ComfyUI already running (PID: $(pgrep -f 'python main.py'))"
+    echo "Stop it first: pkill -f 'python main.py'"
+    exit 1
+fi
+source /opt/miniforge3/etc/profile.d/conda.sh
+conda activate main
+nohup python main.py --listen 0.0.0.0 --port 8188 > /workspace/comfyui.log 2>&1 &
+echo "ComfyUI started (PID: $!)"
+echo "Logs: tail -f /workspace/comfyui.log"
+SCRIPT
+chmod +x "$WORKSPACE/ComfyUI/start_comfy.sh"
+
 # Start ComfyUI in background
 cd "$WORKSPACE/ComfyUI"
 nohup python main.py --listen 0.0.0.0 --port 8188 > /workspace/comfyui.log 2>&1 &
@@ -150,5 +188,6 @@ echo "ComfyUI started in background (PID: $COMFY_PID)"
 echo ""
 echo "Useful commands:"
 echo "  View logs:      tail -f /workspace/comfyui.log"
+echo "  Restart:        ./start_comfy.sh"
+echo "  Stop:           pkill -f 'python main.py'"
 echo "  Sync outputs:   b2 sync /workspace/ComfyUI/output b2://\$B2_BUCKET/comfy_outputs"
-echo "  Stop ComfyUI:   kill $COMFY_PID"
