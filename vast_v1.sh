@@ -98,9 +98,23 @@ if [ -n "$B2_BUCKET" ]; then
 
     # Sync each model type folder
     for model_type in diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models; do
+        echo ""
         echo "--- Syncing $model_type ---"
+        echo "Source: b2://$B2_BUCKET/$B2_MODELS_PATH/$model_type"
+        echo "Dest:   $WORKSPACE/ComfyUI/models/$model_type"
         mkdir -p "$WORKSPACE/ComfyUI/models/$model_type"
-        b2 sync "b2://$B2_BUCKET/$B2_MODELS_PATH/$model_type" "$WORKSPACE/ComfyUI/models/$model_type" --skipNewer || true
+
+        # List files in bucket before sync
+        echo "Files in bucket:"
+        b2 ls "b2://$B2_BUCKET/$B2_MODELS_PATH/$model_type" 2>/dev/null || echo "  (empty or not found)"
+
+        # Run sync
+        echo "Syncing..."
+        b2 sync "b2://$B2_BUCKET/$B2_MODELS_PATH/$model_type" "$WORKSPACE/ComfyUI/models/$model_type" || true
+
+        # Show what was downloaded
+        echo "Local files after sync:"
+        ls -lh "$WORKSPACE/ComfyUI/models/$model_type" 2>/dev/null || echo "  (empty)"
     done
 
     echo "=== Model Sync Complete ==="
@@ -109,9 +123,4 @@ else
 fi
 
 echo "Setup complete!"
-
-# Start ComfyUI in background
-cd "$WORKSPACE/ComfyUI"
-nohup python main.py --listen 0.0.0.0 --port 8188 > /workspace/comfyui.log 2>&1 &
-echo "ComfyUI started in background (PID: $!)"
-echo "Logs: /workspace/comfyui.log"
+echo "To start ComfyUI: cd /workspace/ComfyUI && python main.py --listen 0.0.0.0 --port 8188"
