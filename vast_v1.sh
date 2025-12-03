@@ -2,6 +2,15 @@
 set -e
 
 echo "=== Custom ComfyUI Setup ==="
+START_TIME=$SECONDS
+
+# Initialize conda environment
+echo "Initializing conda..."
+source /opt/miniforge3/etc/profile.d/conda.sh
+conda activate main
+echo "Conda environment: $CONDA_DEFAULT_ENV"
+echo "Python path: $(which python)"
+echo "Pip path: $(which pip)"
 
 # Use WORKSPACE if set, otherwise default to /workspace
 WORKSPACE=${WORKSPACE:-/workspace}
@@ -53,7 +62,9 @@ cd "$WORKSPACE/ComfyUI"
 
 # Install ComfyUI requirements
 echo "Installing ComfyUI dependencies..."
+echo "Using pip at: $(which pip)"
 pip install -r requirements.txt --no-cache-dir
+echo "Verifying install - safetensors location: $(python -c 'import safetensors; print(safetensors.__file__)' 2>&1)"
 
 # ============================================
 # Install Custom Nodes
@@ -122,5 +133,22 @@ else
     echo "Skipping B2 model sync (B2_BUCKET not configured)"
 fi
 
-echo "Setup complete!"
-echo "To start ComfyUI: cd /workspace/ComfyUI && python main.py --listen 0.0.0.0 --port 8188"
+ELAPSED=$((SECONDS - START_TIME))
+MINUTES=$((ELAPSED / 60))
+SECS=$((ELAPSED % 60))
+
+echo ""
+echo "============================================"
+echo "Setup complete! (took ${MINUTES}m ${SECS}s)"
+echo "============================================"
+
+# Start ComfyUI in background
+cd "$WORKSPACE/ComfyUI"
+nohup python main.py --listen 0.0.0.0 --port 8188 > /workspace/comfyui.log 2>&1 &
+COMFY_PID=$!
+echo "ComfyUI started in background (PID: $COMFY_PID)"
+echo ""
+echo "Useful commands:"
+echo "  View logs:      tail -f /workspace/comfyui.log"
+echo "  Sync outputs:   b2 sync /workspace/ComfyUI/output b2://\$B2_BUCKET/comfy_outputs"
+echo "  Stop ComfyUI:   kill $COMFY_PID"
