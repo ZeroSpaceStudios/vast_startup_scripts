@@ -1,6 +1,34 @@
 # Useful Commands for Vast.ai ComfyUI Instance
 
-## Quick Start
+## SSH Tunnel Access (Required)
+
+ComfyUI is bound to localhost only for security. You must use SSH tunnel to access it.
+
+### From Windows/Mac/Linux:
+```bash
+ssh -p <SSH_PORT> root@<IP_ADDRESS> -L 8189:localhost:8188
+```
+
+Then open in browser: `http://localhost:8189`
+
+### Multiple Instances
+```bash
+# Instance 1 → localhost:8189
+ssh -p <SSH_PORT_1> root@<IP_ADDRESS_1> -L 8189:localhost:8188
+
+# Instance 2 → localhost:8190
+ssh -p <SSH_PORT_2> root@<IP_ADDRESS_2> -L 8190:localhost:8188
+
+# Instance 3 → localhost:8191
+ssh -p <SSH_PORT_3> root@<IP_ADDRESS_3> -L 8191:localhost:8188
+```
+
+### Port Conflict Note
+If you have local ComfyUI running on port 8188, use different local ports (8189, 8190, etc.) for your tunnels.
+
+---
+
+## Quick Start (On Instance)
 
 ```bash
 # Use the helper script to restart ComfyUI
@@ -10,7 +38,7 @@
 source /opt/miniforge3/etc/profile.d/conda.sh
 conda activate main
 cd /workspace/ComfyUI
-nohup python main.py --listen 0.0.0.0 --port 8188 > /workspace/comfyui.log 2>&1 &
+nohup python main.py --listen 127.0.0.1 --port 8188 > /workspace/comfyui.log 2>&1 &
 ```
 
 ## ComfyUI
@@ -201,16 +229,16 @@ rm /workspace/ComfyUI/models/loras/unwanted.safetensors
 # scp -P <SSH_PORT> root@<PUBLIC_IP>:/remote/path /local/path
 
 # Example: Download provisioning log
-scp -P 34278 root@142.170.89.112:/var/log/portal/provisioning.log ./provisioning.log
+scp -P <SSH_PORT> root@<IP_ADDRESS>:/var/log/portal/provisioning.log ./provisioning.log
 
 # Example: Download an output image
-scp -P 34278 root@142.170.89.112:/workspace/ComfyUI/output/image.png ./image.png
+scp -P <SSH_PORT> root@<IP_ADDRESS>:/workspace/ComfyUI/output/image.png ./image.png
 ```
 
 ## B2 Bucket Structure Reference
 
 ```
-zsmodels/
+<BUCKET_NAME>/
 ├── comfy_models/
 │   ├── diffusion_models/
 │   ├── controlnet/

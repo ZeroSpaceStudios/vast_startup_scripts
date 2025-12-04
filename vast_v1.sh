@@ -177,7 +177,7 @@ conda activate main
 nohup python main.py --listen 127.0.0.1 --port 8188 > /workspace/comfyui.log 2>&1 &
 echo "ComfyUI started (PID: $!)"
 echo "Logs: tail -f /workspace/comfyui.log"
-echo "Access via SSH tunnel: ssh -p <PORT> root@<IP> -L 8188:localhost:8188"
+echo "Access via SSH tunnel: ssh -p <PORT> root@<IP> -L 8189:localhost:8188"
 SCRIPT
 chmod +x "$WORKSPACE/ComfyUI/start_comfy.sh"
 
@@ -193,9 +193,11 @@ echo "============================================"
 echo "ComfyUI is bound to localhost only (not publicly exposed)"
 echo ""
 echo "To access, create SSH tunnel from your local machine:"
-echo "  ssh -p <SSH_PORT> root@<PUBLIC_IP> -L 8188:localhost:8188"
+echo "  ssh -p <SSH_PORT> root@<PUBLIC_IP> -L 8189:localhost:8188"
 echo ""
-echo "Then open: http://localhost:8188"
+echo "Then open: http://localhost:8189"
+echo ""
+echo "Note: Use port 8189+ to avoid conflicts with local ComfyUI on 8188"
 echo ""
 echo "Useful commands:"
 echo "  View logs:      tail -f /workspace/comfyui.log"
