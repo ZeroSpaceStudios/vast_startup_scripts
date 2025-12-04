@@ -43,15 +43,20 @@ CUSTOM_NODES=(
 B2_MODELS_PATH="comfy_models"
 B2_WORKFLOWS_PATH="comfy_workflows"
 
-# Install B2 CLI
-echo "Installing B2 CLI..."
-wget -q https://github.com/Backblaze/B2_Command_Line_Tool/releases/latest/download/b2-linux
-chmod +x b2-linux
-mv b2-linux /usr/local/bin/b2
+# Install rclone
+echo "Installing rclone..."
+curl -s https://rclone.org/install.sh | bash
 
-# Set B2 credentials (use both naming conventions)
-export B2_APPLICATION_KEY_ID="${B2_APP_KEY_ID:-$B2_KEY_ID}"
-export B2_APPLICATION_KEY="$B2_APP_KEY"
+# Configure rclone for B2 (non-interactive)
+echo "Configuring rclone for B2..."
+mkdir -p ~/.config/rclone
+cat > ~/.config/rclone/rclone.conf << EOF
+[b2]
+type = b2
+account = ${B2_APP_KEY_ID:-$B2_KEY_ID}
+key = $B2_APP_KEY
+hard_delete = true
+EOF
 
 # Clone ComfyUI if not present
 echo "Setting up ComfyUI..."
@@ -112,17 +117,17 @@ if [ -n "$B2_BUCKET" ]; then
     for model_type in diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models; do
         echo ""
         echo "--- Syncing $model_type ---"
-        echo "Source: b2://$B2_BUCKET/$B2_MODELS_PATH/$model_type"
+        echo "Source: b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type"
         echo "Dest:   $WORKSPACE/ComfyUI/models/$model_type"
         mkdir -p "$WORKSPACE/ComfyUI/models/$model_type"
 
         # List files in bucket before sync
         echo "Files in bucket:"
-        b2 ls "b2://$B2_BUCKET/$B2_MODELS_PATH/$model_type" 2>/dev/null || echo "  (empty or not found)"
+        rclone ls "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" 2>/dev/null || echo "  (empty or not found)"
 
-        # Run sync
-        echo "Syncing..."
-        b2 sync "b2://$B2_BUCKET/$B2_MODELS_PATH/$model_type" "$WORKSPACE/ComfyUI/models/$model_type" || true
+        # Run sync with progress
+        echo "Downloading..."
+        rclone copy "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" "$WORKSPACE/ComfyUI/models/$model_type" --progress || true
 
         # Show what was downloaded
         echo "Local files after sync:"
@@ -138,14 +143,14 @@ if [ -n "$B2_BUCKET" ]; then
     echo "=== Syncing Workflows from B2 ==="
     WORKFLOWS_DIR="$WORKSPACE/ComfyUI/user/default/workflows"
     mkdir -p "$WORKFLOWS_DIR"
-    echo "Source: b2://$B2_BUCKET/$B2_WORKFLOWS_PATH"
+    echo "Source: b2:$B2_BUCKET/$B2_WORKFLOWS_PATH"
     echo "Dest:   $WORKFLOWS_DIR"
 
     echo "Files in bucket:"
-    b2 ls "b2://$B2_BUCKET/$B2_WORKFLOWS_PATH" 2>/dev/null || echo "  (empty or not found)"
+    rclone ls "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" 2>/dev/null || echo "  (empty or not found)"
 
-    echo "Syncing..."
-    b2 sync "b2://$B2_BUCKET/$B2_WORKFLOWS_PATH" "$WORKFLOWS_DIR" || true
+    echo "Downloading..."
+    rclone copy "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" "$WORKFLOWS_DIR" --progress || true
 
     echo "Local workflows after sync:"
     ls -lh "$WORKFLOWS_DIR" 2>/dev/null || echo "  (empty)"
@@ -203,4 +208,4 @@ echo "Useful commands:"
 echo "  View logs:      tail -f /workspace/comfyui.log"
 echo "  Restart:        ./start_comfy.sh"
 echo "  Stop:           pkill -f 'python main.py'"
-echo "  Sync outputs:   b2 sync /workspace/ComfyUI/output b2://\$B2_BUCKET/comfy_outputs"
+echo "  Sync outputs:   rclone copy /workspace/ComfyUI/output b2:\$B2_BUCKET/comfy_outputs/\$(hostname) --progress"
