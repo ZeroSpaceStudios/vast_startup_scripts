@@ -29,11 +29,11 @@ CUSTOM_NODES=(
     "https://github.com/neonvoid/ComfyUI-SAM3_nvFork.git"
     "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
     "https://github.com/neonvoid/NV_Comfy_Utils.git"
-    
-
-
-
-    # Add more URLs below:
+    "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git"
+    "https://github.com/yolain/ComfyUI-Easy-Use.git"
+    "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+    "https://github.com/BadCafeCode/masquerade-nodes-comfyui.git"
+    "https://github.com/evanspearman/ComfyMath.git"
 )
 
 # ============================================
@@ -116,6 +116,24 @@ done
 echo "=== Custom Nodes Installation Complete ==="
 cd "$WORKSPACE/ComfyUI"
 
+# ===========================================
+# Configure NV_Comfy_Utils .env (Slack Integration)
+# ===========================================
+NV_UTILS_DIR="$WORKSPACE/ComfyUI/custom_nodes/NV_Comfy_Utils"
+if [ -n "$SLACK_BOT_TOKEN" ] && [ -d "$NV_UTILS_DIR" ]; then
+    echo "Creating NV_Comfy_Utils .env file..."
+    cat > "$NV_UTILS_DIR/.env" << EOF
+# NV_Comfy_Utils - Slack Integration Config
+SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN
+SLACK_ERROR_CHANNEL=${SLACK_ERROR_CHANNEL:-}
+EOF
+    echo "NV_Comfy_Utils .env configured"
+elif [ -n "$SLACK_BOT_TOKEN" ]; then
+    echo "Warning: SLACK_BOT_TOKEN set but NV_Comfy_Utils directory not found"
+else
+    echo "Skipping NV_Comfy_Utils .env (SLACK_BOT_TOKEN not configured)"
+fi
+
 # ============================================
 # Sync Models from B2
 # ============================================
@@ -188,7 +206,7 @@ if pgrep -f "python main.py" > /dev/null; then
 fi
 source /opt/miniforge3/etc/profile.d/conda.sh
 conda activate main
-nohup python main.py --listen 127.0.0.1 --port 8188 > /workspace/comfyui.log 2>&1 &
+nohup python main.py --listen 127.0.0.1 --port 8188 --max-upload-size 999999999 > /workspace/comfyui.log 2>&1 &
 echo "ComfyUI started (PID: $!)"
 echo "Logs: tail -f /workspace/comfyui.log"
 echo "Access via SSH tunnel: ssh -p <PORT> root@<IP> -L 8189:localhost:8188"
@@ -197,7 +215,7 @@ chmod +x "$WORKSPACE/ComfyUI/start_comfy.sh"
 
 # Start ComfyUI in background (localhost only - requires SSH tunnel)
 cd "$WORKSPACE/ComfyUI"
-nohup python main.py --listen 127.0.0.1 --port 8188 > /workspace/comfyui.log 2>&1 &
+nohup python main.py --listen 127.0.0.1 --port 8188 --max-upload-size 999999999 > /workspace/comfyui.log 2>&1 &
 COMFY_PID=$!
 echo "ComfyUI started in background (PID: $COMFY_PID)"
 echo ""
@@ -218,3 +236,7 @@ echo "  View logs:      tail -f /workspace/comfyui.log"
 echo "  Restart:        ./start_comfy.sh"
 echo "  Stop:           pkill -f 'python main.py'"
 echo "  Sync outputs:   rclone copy /workspace/ComfyUI/output b2:\$B2_BUCKET/comfy_outputs/\$(hostname) --progress"
+echo ""
+echo "Optional env vars for Slack notifications:"
+echo "  SLACK_BOT_TOKEN     - Bot token (xoxb-...)"
+echo "  SLACK_ERROR_CHANNEL - Channel name, ID, or user ID for DMs"
