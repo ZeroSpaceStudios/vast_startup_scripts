@@ -34,6 +34,7 @@ CUSTOM_NODES=(
     "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
     "https://github.com/BadCafeCode/masquerade-nodes-comfyui.git"
     "https://github.com/evanspearman/ComfyMath.git"
+    "https://github.com/munkyfoot/ComfyUI-TextOverlay.git"
 )
 
 # ============================================
@@ -150,11 +151,11 @@ if [ -n "$B2_BUCKET" ]; then
 
         # List files in bucket before sync
         echo "Files in bucket:"
-        rclone ls "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" 2>/dev/null || echo "  (empty or not found)"
+        rclone ls "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
 
         # Run sync with progress
         echo "Downloading..."
-        rclone copy "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" "$WORKSPACE/ComfyUI/models/$model_type" --progress || true
+        rclone copy "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" "$WORKSPACE/ComfyUI/models/$model_type" --exclude "archive/**" --progress || true
 
         # Show what was downloaded
         echo "Local files after sync:"
@@ -174,10 +175,10 @@ if [ -n "$B2_BUCKET" ]; then
     echo "Dest:   $WORKFLOWS_DIR"
 
     echo "Files in bucket:"
-    rclone ls "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" 2>/dev/null || echo "  (empty or not found)"
+    rclone ls "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
 
     echo "Downloading..."
-    rclone copy "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" "$WORKFLOWS_DIR" --progress || true
+    rclone copy "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" "$WORKFLOWS_DIR" --exclude "archive/**" --progress || true
 
     echo "Local workflows after sync:"
     ls -lh "$WORKFLOWS_DIR" 2>/dev/null || echo "  (empty)"

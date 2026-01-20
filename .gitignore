@@ -1,9 +1,10 @@
 # Local notes (not committed)
 notes/
-
+ref_files/
 # Claude Code context (local only)
 CLAUDE.md
 .claude
 
 # Docker local testing (not committed)
 docker-local/
+vastserverlesstest.py

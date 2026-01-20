@@ -108,11 +108,11 @@ if [ -n "$B2_BUCKET" ]; then
 
     # List files in bucket before sync
     echo "Files in bucket:"
-    rclone ls "b2:$B2_BUCKET/$B2_MODELS_PATH" 2>/dev/null || echo "  (empty or not found)"
+    rclone ls "b2:$B2_BUCKET/$B2_MODELS_PATH" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
 
     # Run sync with progress
     echo "Downloading..."
-    rclone copy "b2:$B2_BUCKET/$B2_MODELS_PATH" "$WORKSPACE/ai-toolkit/models" --progress || true
+    rclone copy "b2:$B2_BUCKET/$B2_MODELS_PATH" "$WORKSPACE/ai-toolkit/models" --exclude "archive/**" --progress || true
 
     # Show what was downloaded
     echo "Local models after sync:"
@@ -136,11 +136,11 @@ if [ -n "$B2_BUCKET" ]; then
 
     # List files in bucket before sync
     echo "Files in bucket:"
-    rclone ls "b2:$B2_BUCKET/$B2_DATASETS_PATH" 2>/dev/null || echo "  (empty or not found)"
+    rclone ls "b2:$B2_BUCKET/$B2_DATASETS_PATH" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
 
     # Run sync with progress
     echo "Downloading..."
-    rclone copy "b2:$B2_BUCKET/$B2_DATASETS_PATH" "$WORKSPACE/ai-toolkit/datasets" --progress || true
+    rclone copy "b2:$B2_BUCKET/$B2_DATASETS_PATH" "$WORKSPACE/ai-toolkit/datasets" --exclude "archive/**" --progress || true
 
     # Show what was downloaded
     echo "Local datasets after sync:"
