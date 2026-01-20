@@ -179,22 +179,6 @@ if [ -n "$B2_BUCKET" ] && [ -n "$B2_APP_KEY" ]; then
     echo ""
     echo "=== Model Sync Complete ==="
 
-    # ============================================
-    # Sync Workflows from B2
-    # ============================================
-    echo ""
-    echo "=== Syncing Workflows from B2 ==="
-    WORKFLOWS_DIR="$COMFYUI_DIR/user/default/workflows"
-    mkdir -p "$WORKFLOWS_DIR"
-
-    rclone copy "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" \
-        "$WORKFLOWS_DIR" \
-        --exclude "archive/**" \
-        --progress || true
-
-    echo "Workflows synced:"
-    ls -lh "$WORKFLOWS_DIR" 2>/dev/null | head -10 || echo "  (empty)"
-    echo "=== Workflow Sync Complete ==="
 
     # ============================================
     # Sync Input Videos from B2
