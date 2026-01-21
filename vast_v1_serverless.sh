@@ -164,23 +164,6 @@ done
 echo "=== Custom Nodes Installation Complete ==="
 
 # ============================================
-# Configure NV_Comfy_Utils .env (Slack Integration)
-# ============================================
-NV_UTILS_DIR="$CUSTOM_NODES_DIR/NV_Comfy_Utils"
-if [ -n "$SLACK_BOT_TOKEN" ] && [ -d "$NV_UTILS_DIR" ]; then
-    echo ""
-    echo "=== Configuring Slack Integration ==="
-    cat > "$NV_UTILS_DIR/.env" << EOF
-# NV_Comfy_Utils - Slack Integration Config
-SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN
-SLACK_ERROR_CHANNEL=${SLACK_ERROR_CHANNEL:-}
-EOF
-    echo "NV_Comfy_Utils .env configured"
-elif [ -n "$SLACK_BOT_TOKEN" ]; then
-    echo "Warning: SLACK_BOT_TOKEN set but NV_Comfy_Utils not found"
-fi
-
-# ============================================
 # Sync Models from B2
 # ============================================
 if [ -n "$B2_BUCKET" ] && [ -n "$B2_APP_KEY" ]; then
