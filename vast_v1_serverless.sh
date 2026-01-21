@@ -93,6 +93,34 @@ else
 fi
 
 # ============================================
+# Install System Dependencies
+# ============================================
+echo ""
+echo "=== Installing System Dependencies ==="
+apt-get update && apt-get install -y ffmpeg libgl1-mesa-glx libglib2.0-0 || true
+
+# ============================================
+# Activate Virtual Environment
+# ============================================
+# The vastai/comfy base image uses a venv at /venv/main
+VENV_PATH="/venv/main"
+if [ -d "$VENV_PATH" ]; then
+    echo "Activating venv at $VENV_PATH"
+    source "$VENV_PATH/bin/activate"
+    PIP_CMD="$VENV_PATH/bin/pip"
+    PYTHON_CMD="$VENV_PATH/bin/python"
+else
+    echo "No venv found, using system pip/python"
+    PIP_CMD="pip"
+    PYTHON_CMD="python"
+fi
+
+# Install common dependencies that many nodes need
+echo ""
+echo "=== Installing Common Python Dependencies ==="
+$PIP_CMD install opencv-python-headless accelerate omegaconf imageio-ffmpeg --no-cache-dir || true
+
+# ============================================
 # Install Custom Nodes
 # ============================================
 echo ""
@@ -121,14 +149,14 @@ for repo_url in "${CUSTOM_NODES[@]}"; do
     # Install requirements if they exist
     if [ -f "$repo_name/requirements.txt" ]; then
         echo "Installing dependencies for $repo_name..."
-        pip install -r "$repo_name/requirements.txt" --no-cache-dir || true
+        $PIP_CMD install -r "$repo_name/requirements.txt" --no-cache-dir || true
     fi
 
     # Run install.py if it exists
     if [ -f "$repo_name/install.py" ]; then
         echo "Running install.py for $repo_name..."
         cd "$repo_name"
-        python install.py || true
+        $PYTHON_CMD install.py || true
         cd ..
     fi
 done
