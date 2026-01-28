@@ -48,6 +48,7 @@ CUSTOM_NODES=(
     #"https://github.com/ShmuelRonen/ComfyUI-VideoUpscale_WithModel.git"
     #"https://github.com/neonvoid/ComfyUI-GIMM-VFI_nvFork.git"
     #"https://github.com/neonvoid/ComfyUI-SAM3_nvFork.git"
+    "https://github.com/neonvoid/comfy-inpaint-crop-fork.git"
     "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
     "https://github.com/neonvoid/NV_Comfy_Utils.git"
     "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git"
