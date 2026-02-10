@@ -1,5 +1,9 @@
 # Local notes (not committed)
 notes/
+ref_notes/
+jobs/
+nul
+config/
 ref_files/
 scripts/
 # Claude Code context (local only)
