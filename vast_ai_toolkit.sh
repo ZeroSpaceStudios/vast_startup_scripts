@@ -1,47 +1,38 @@
 #!/bin/bash
 set -e
 
-echo "=== AI-Toolkit Setup ==="
+echo "=== AI-Toolkit Setup (Docker Image) ==="
+echo "Image: vastai/ostris-ai-toolkit:50664c2-cuda-12.9"
 START_TIME=$SECONDS
 
 # ============================================
-# 1. Initialize Conda Environment
+# Paths — Docker image has ai-toolkit at /app/ai-toolkit
+# We symlink to /workspace for convenience
 # ============================================
-echo "Initializing conda..."
-source /opt/miniforge3/etc/profile.d/conda.sh
-conda activate main
-echo "Conda environment: $CONDA_DEFAULT_ENV"
-echo "Python path: $(which python)"
-echo "Pip path: $(which pip)"
-
-# Use WORKSPACE if set, otherwise default to /workspace
+AITK_DIR="/app/ai-toolkit"
 WORKSPACE=${WORKSPACE:-/workspace}
 mkdir -p "$WORKSPACE"
-cd "$WORKSPACE"
+
+# Symlink so /workspace/ai-toolkit also works
+if [ ! -e "$WORKSPACE/ai-toolkit" ] && [ -d "$AITK_DIR" ]; then
+    ln -s "$AITK_DIR" "$WORKSPACE/ai-toolkit"
+    echo "Symlinked $AITK_DIR → $WORKSPACE/ai-toolkit"
+fi
 
 # ============================================
-# B2 SYNC PATHS - Configurable via env vars
+# B2 Sync Paths — Configurable via env vars
 # ============================================
-B2_MODELS_PATH=${B2_MODELS_PATH:-aitoolkit_models}
 B2_DATASETS_PATH=${B2_DATASETS_PATH:-aitoolkit_datasets}
+B2_CONFIGS_PATH=${B2_CONFIGS_PATH:-aitoolkit_configs}
+B2_OUTPUTS_PATH=${B2_OUTPUTS_PATH:-aitoolkit_outputs}
 
 # ============================================
-# 2. Install System Dependencies
+# 1. Install rclone & Configure B2
 # ============================================
-echo "Installing system dependencies..."
-
-# Install rclone
-echo "Installing rclone..."
+echo ""
+echo "=== Installing rclone ==="
 curl -s https://rclone.org/install.sh | bash
 
-# Install Node.js 18 (NodeSource)
-echo "Installing Node.js 18..."
-curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-apt-get install -y nodejs
-echo "Node.js version: $(node --version)"
-echo "npm version: $(npm --version)"
-
-# Configure rclone for B2 (non-interactive)
 echo "Configuring rclone for B2..."
 mkdir -p ~/.config/rclone
 cat > ~/.config/rclone/rclone.conf << EOF
@@ -53,170 +44,159 @@ hard_delete = true
 EOF
 
 # ============================================
-# 3. Clone & Install AI-Toolkit
-# ============================================
-echo "=== Setting up AI-Toolkit ==="
-
-if [ ! -d "$WORKSPACE/ai-toolkit" ]; then
-    echo "Cloning AI-Toolkit..."
-    git clone https://github.com/ostris/ai-toolkit.git
-else
-    echo "AI-Toolkit already exists, pulling latest..."
-    cd "$WORKSPACE/ai-toolkit" && git pull || true
-fi
-
-cd "$WORKSPACE/ai-toolkit"
-
-# Install PyTorch with CUDA 12.6 (matches vast.ai environment)
-echo "Installing PyTorch 2.7.0 with CUDA 12.6..."
-pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 \
-    --index-url https://download.pytorch.org/whl/cu126
-
-# Install all Python dependencies
-echo "Installing Python dependencies from requirements.txt..."
-pip install -r requirements.txt --no-cache-dir
-
-# Install Node.js dependencies for web UI
-echo "Installing Node.js dependencies..."
-npm install
-
-echo "=== AI-Toolkit Installation Complete ==="
-
-# ============================================
-# 4. Create .env Configuration
+# 2. Configure HuggingFace Token
 # ============================================
 if [ -n "$HF_TOKEN" ]; then
-    echo "Creating .env file with HF_TOKEN..."
-    cat > "$WORKSPACE/ai-toolkit/.env" << EOF
+    echo "Configuring HF_TOKEN..."
+    # Write to ai-toolkit .env (auto-loaded by python-dotenv)
+    cat > "$AITK_DIR/.env" << EOF
 HF_TOKEN=$HF_TOKEN
+HF_HUB_ENABLE_HF_TRANSFER=1
 EOF
-    echo "HF_TOKEN configured in .env"
+    echo "HF_TOKEN configured in $AITK_DIR/.env"
 else
-    echo "Skipping .env creation (HF_TOKEN not configured)"
+    echo "WARNING: HF_TOKEN not set — gated models (FLUX.1-dev, SD3.5, WAN) will fail to download"
 fi
 
 # ============================================
-# 5. Sync Models from B2
+# Rclone tuning — optimized for large files over fast datacenter links
+# ============================================
+RCLONE_FLAGS=(
+    --transfers 16              # concurrent file transfers (default: 4)
+    --checkers 16               # concurrent file checks (default: 8)
+    --multi-thread-streams 8    # streams per large file (default: 4)
+    --multi-thread-cutoff 50M   # use multi-thread for files >50MB
+    --buffer-size 64M           # read-ahead buffer (default: 16M)
+    --fast-list                 # batch directory listings (fewer API calls)
+    --b2-download-concurrency 16 # B2-specific parallel chunk downloads
+    --ignore-existing           # skip files already present (saves time on restarts)
+)
+
+# ============================================
+# 3. Sync Datasets & Configs from B2 (parallel)
 # ============================================
 if [ -n "$B2_BUCKET" ]; then
     echo ""
-    echo "=== Syncing Models from B2 ==="
-    mkdir -p "$WORKSPACE/ai-toolkit/models"
+    echo "=== Syncing Datasets & Configs from B2 (parallel) ==="
+    SYNC_START=$SECONDS
 
-    echo "Source: b2:$B2_BUCKET/$B2_MODELS_PATH"
-    echo "Dest:   $WORKSPACE/ai-toolkit/models"
+    mkdir -p "$AITK_DIR/datasets"
+    mkdir -p "$AITK_DIR/config"
 
-    # List files in bucket before sync
-    echo "Files in bucket:"
-    rclone ls "b2:$B2_BUCKET/$B2_MODELS_PATH" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
+    # Sync datasets in background
+    (
+        echo "[sync:datasets] Starting..."
+        echo "[sync:datasets] Source: b2:$B2_BUCKET/$B2_DATASETS_PATH"
+        echo "[sync:datasets] Dest:   $AITK_DIR/datasets"
+        rclone copy "b2:$B2_BUCKET/$B2_DATASETS_PATH" "$AITK_DIR/datasets" \
+            --exclude "archive/**" \
+            "${RCLONE_FLAGS[@]}" 2>&1 || true
+        echo "[sync:datasets] Done."
+    ) &
+    PID_DATASETS=$!
 
-    # Run sync with progress
-    echo "Downloading..."
-    rclone copy "b2:$B2_BUCKET/$B2_MODELS_PATH" "$WORKSPACE/ai-toolkit/models" --exclude "archive/**" --progress || true
+    # Sync configs in background
+    (
+        echo "[sync:configs] Starting..."
+        echo "[sync:configs] Source: b2:$B2_BUCKET/$B2_CONFIGS_PATH"
+        echo "[sync:configs] Dest:   $AITK_DIR/config"
+        rclone copy "b2:$B2_BUCKET/$B2_CONFIGS_PATH" "$AITK_DIR/config" \
+            "${RCLONE_FLAGS[@]}" 2>&1 || true
+        echo "[sync:configs] Done."
+    ) &
+    PID_CONFIGS=$!
 
-    # Show what was downloaded
-    echo "Local models after sync:"
-    ls -lh "$WORKSPACE/ai-toolkit/models" 2>/dev/null || echo "  (empty)"
+    echo "Waiting for parallel syncs to finish..."
+    SYNC_FAILED=0
+    wait "$PID_DATASETS" || ((SYNC_FAILED++))
+    wait "$PID_CONFIGS" || ((SYNC_FAILED++))
 
-    echo "=== Model Sync Complete ==="
+    SYNC_ELAPSED=$((SECONDS - SYNC_START))
+    SYNC_MIN=$((SYNC_ELAPSED / 60))
+    SYNC_SEC=$((SYNC_ELAPSED % 60))
+    echo "=== Syncs finished in ${SYNC_MIN}m ${SYNC_SEC}s (${SYNC_FAILED} failures) ==="
+
+    # Summary
+    echo "Local datasets:"
+    ls -lh "$AITK_DIR/datasets" 2>/dev/null || echo "  (empty)"
+    echo "Local configs:"
+    ls -lh "$AITK_DIR/config"/*.yaml "$AITK_DIR/config"/*.yml 2>/dev/null || echo "  (no custom configs)"
 else
-    echo "Skipping model sync (B2_BUCKET not configured)"
+    echo "Skipping B2 sync (B2_BUCKET not configured)"
 fi
 
 # ============================================
-# 6. Sync Datasets from B2
+# 5. Generate Helper Scripts
 # ============================================
-if [ -n "$B2_BUCKET" ]; then
-    echo ""
-    echo "=== Syncing Datasets from B2 ==="
-    mkdir -p "$WORKSPACE/ai-toolkit/datasets"
-
-    echo "Source: b2:$B2_BUCKET/$B2_DATASETS_PATH"
-    echo "Dest:   $WORKSPACE/ai-toolkit/datasets"
-
-    # List files in bucket before sync
-    echo "Files in bucket:"
-    rclone ls "b2:$B2_BUCKET/$B2_DATASETS_PATH" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
-
-    # Run sync with progress
-    echo "Downloading..."
-    rclone copy "b2:$B2_BUCKET/$B2_DATASETS_PATH" "$WORKSPACE/ai-toolkit/datasets" --exclude "archive/**" --progress || true
-
-    # Show what was downloaded
-    echo "Local datasets after sync:"
-    ls -lh "$WORKSPACE/ai-toolkit/datasets" 2>/dev/null || echo "  (empty)"
-
-    echo "=== Dataset Sync Complete ==="
-else
-    echo "Skipping dataset sync (B2_BUCKET not configured)"
-fi
-
-# ============================================
-# 7. Generate Helper Scripts
-# ============================================
+echo ""
 echo "Creating helper scripts..."
 
-# start_ui.sh - Launch Node.js web UI
-cat > "$WORKSPACE/ai-toolkit/start_ui.sh" << 'SCRIPT'
+# train.sh — Run CLI training
+cat > "$AITK_DIR/train.sh" << 'SCRIPT'
 #!/bin/bash
-cd /workspace/ai-toolkit
-source /opt/miniforge3/etc/profile.d/conda.sh
-conda activate main
-if pgrep -f "node.*server" > /dev/null; then
-    echo "UI already running (PID: $(pgrep -f 'node.*server'))"
-    echo "Stop it first: pkill -f 'node.*server'"
-    exit 1
-fi
-nohup npm run server > /workspace/aitoolkit_ui.log 2>&1 &
-echo "AI-Toolkit UI started (PID: $!)"
-echo "Logs: tail -f /workspace/aitoolkit_ui.log"
-echo ""
-echo "Access via SSH tunnel from your LOCAL machine:"
-echo "  ssh -p <SSH_PORT> root@<PUBLIC_IP> -L 8675:localhost:8675"
-echo "Then open: http://localhost:8675"
-SCRIPT
-chmod +x "$WORKSPACE/ai-toolkit/start_ui.sh"
-
-# train.sh - Run CLI training
-cat > "$WORKSPACE/ai-toolkit/train.sh" << 'SCRIPT'
-#!/bin/bash
-cd /workspace/ai-toolkit
-source /opt/miniforge3/etc/profile.d/conda.sh
-conda activate main
+cd /app/ai-toolkit
 if [ -z "$1" ]; then
-    echo "Usage: ./train.sh config/your_config.yml"
+    echo "Usage: ./train.sh config/your_config.yaml"
     echo ""
-    echo "Example configs in: /workspace/ai-toolkit/config/"
-    ls -la /workspace/ai-toolkit/config/ 2>/dev/null || echo "  (no configs found)"
+    echo "Available configs:"
+    ls -1 /app/ai-toolkit/config/*.yaml /app/ai-toolkit/config/*.yml 2>/dev/null || echo "  (none found)"
+    echo ""
+    echo "Example configs:"
+    ls -1 /app/ai-toolkit/config/examples/ 2>/dev/null | head -15
     exit 1
 fi
+echo "Starting training with: $1"
 python run.py "$1"
 SCRIPT
-chmod +x "$WORKSPACE/ai-toolkit/train.sh"
+chmod +x "$AITK_DIR/train.sh"
 
-# sync_outputs.sh - Push training outputs to B2 (hostname-separated)
-cat > "$WORKSPACE/ai-toolkit/sync_outputs.sh" << 'SCRIPT'
+# sync_outputs.sh — Push training outputs to B2
+cat > "$AITK_DIR/sync_outputs.sh" << 'SCRIPT'
 #!/bin/bash
-cd /workspace/ai-toolkit
+cd /app/ai-toolkit
 HOSTNAME=$(hostname)
+B2_OUTPUTS_PATH=${B2_OUTPUTS_PATH:-aitoolkit_outputs}
 if [ -z "$B2_BUCKET" ]; then
     echo "Error: B2_BUCKET not set"
     exit 1
 fi
-echo "Syncing outputs to b2:$B2_BUCKET/aitoolkit_outputs/$HOSTNAME"
-rclone copy output "b2:$B2_BUCKET/aitoolkit_outputs/$HOSTNAME" --progress
+echo "Syncing outputs to b2:$B2_BUCKET/$B2_OUTPUTS_PATH/$HOSTNAME"
+rclone copy output "b2:$B2_BUCKET/$B2_OUTPUTS_PATH/$HOSTNAME" --progress
 echo ""
-echo "Done! Files uploaded to: b2:$B2_BUCKET/aitoolkit_outputs/$HOSTNAME"
+echo "Done! Uploaded to: b2:$B2_BUCKET/$B2_OUTPUTS_PATH/$HOSTNAME"
 echo ""
 echo "To download from another machine:"
-echo "  rclone copy b2:$B2_BUCKET/aitoolkit_outputs/$HOSTNAME ./downloaded_outputs --progress"
+echo "  rclone copy b2:$B2_BUCKET/$B2_OUTPUTS_PATH/$HOSTNAME ./downloaded_outputs --progress"
 SCRIPT
-chmod +x "$WORKSPACE/ai-toolkit/sync_outputs.sh"
+chmod +x "$AITK_DIR/sync_outputs.sh"
 
-echo "Helper scripts created: start_ui.sh, train.sh, sync_outputs.sh"
+# sync_lora_to_comfy.sh — Copy finished LoRA to comfy_models bucket path
+cat > "$AITK_DIR/sync_lora_to_comfy.sh" << 'SCRIPT'
+#!/bin/bash
+if [ -z "$1" ]; then
+    echo "Usage: ./sync_lora_to_comfy.sh output/my_lora_v1/my_lora_v1.safetensors"
+    echo ""
+    echo "Copies a trained LoRA .safetensors file to your B2 comfy_models/loras/ path"
+    echo "so it's available next time you spin up a ComfyUI instance."
+    exit 1
+fi
+if [ -z "$B2_BUCKET" ]; then
+    echo "Error: B2_BUCKET not set"
+    exit 1
+fi
+LORA_FILE="$1"
+LORA_NAME=$(basename "$LORA_FILE")
+echo "Uploading $LORA_NAME → b2:$B2_BUCKET/comfy_models/loras/$LORA_NAME"
+rclone copyto "$LORA_FILE" "b2:$B2_BUCKET/comfy_models/loras/$LORA_NAME" --progress
+echo ""
+echo "Done! LoRA will be synced to ComfyUI on next instance launch."
+SCRIPT
+chmod +x "$AITK_DIR/sync_lora_to_comfy.sh"
+
+echo "Helper scripts created: train.sh, sync_outputs.sh, sync_lora_to_comfy.sh"
 
 # ============================================
-# 8. Calculate Setup Time
+# 6. Setup Time
 # ============================================
 ELAPSED=$((SECONDS - START_TIME))
 MINUTES=$((ELAPSED / 60))
@@ -226,54 +206,37 @@ echo ""
 echo "============================================"
 echo "Setup complete! (took ${MINUTES}m ${SECS}s)"
 echo "============================================"
-
-# ============================================
-# 9. Start UI & Print Instructions
-# ============================================
-cd "$WORKSPACE/ai-toolkit"
-nohup npm run server > /workspace/aitoolkit_ui.log 2>&1 &
-UI_PID=$!
-
-echo ""
-echo "AI-Toolkit UI started (PID: $UI_PID)"
 echo "Instance hostname: $(hostname)"
 echo ""
 echo "============================================"
-echo "SECURE ACCESS - SSH Tunnel Required"
+echo "ACCESS — SSH Tunnel Required"
 echo "============================================"
-echo "The UI is bound to localhost only (not publicly exposed)"
-echo ""
-echo "From your LOCAL machine, run:"
+echo "Web UI (already running on port 8675):"
 echo "  ssh -p <SSH_PORT> root@<PUBLIC_IP> -L 8675:localhost:8675"
-echo ""
-echo "Then open in browser: http://localhost:8675"
-echo ""
-echo "============================================"
-echo "Useful Commands"
-echo "============================================"
-echo "  View logs:      tail -f /workspace/aitoolkit_ui.log"
-echo "  Restart UI:     ./start_ui.sh"
-echo "  Stop UI:        pkill -f 'node.*server'"
-echo "  Run training:   ./train.sh config/your_config.yml"
+echo "  Then open: http://localhost:8675"
 echo ""
 echo "============================================"
-echo "Multi-Instance Output Sync"
+echo "TRAINING"
 echo "============================================"
-echo "  Sync outputs:   ./sync_outputs.sh"
-echo "  Uploads to:     b2:\$B2_BUCKET/aitoolkit_outputs/$(hostname)/"
+echo "  CLI:    cd /app/ai-toolkit && python run.py config/my_lora.yaml"
+echo "  Helper: ./train.sh config/my_lora.yaml"
+echo "  tmux:   tmux new -s train  (detach: Ctrl+B,D  reattach: tmux a -t train)"
 echo ""
 echo "============================================"
-echo "Manual Sync Commands"
+echo "SYNC"
 echo "============================================"
-echo "  Re-sync models:   rclone copy b2:\$B2_BUCKET/$B2_MODELS_PATH \$WORKSPACE/ai-toolkit/models --progress"
-echo "  Re-sync datasets: rclone copy b2:\$B2_BUCKET/$B2_DATASETS_PATH \$WORKSPACE/ai-toolkit/datasets --progress"
+echo "  Sync outputs to B2:          ./sync_outputs.sh"
+echo "  Copy LoRA to ComfyUI bucket: ./sync_lora_to_comfy.sh output/name/name.safetensors"
+echo "  Re-sync datasets:            rclone copy b2:\$B2_BUCKET/$B2_DATASETS_PATH $AITK_DIR/datasets --progress"
+echo "  Re-sync configs:             rclone copy b2:\$B2_BUCKET/$B2_CONFIGS_PATH $AITK_DIR/config --progress"
 echo ""
 echo "============================================"
-echo "Environment Variables (set in vast.ai)"
+echo "ENV VARS (set in vast.ai template)"
 echo "============================================"
-echo "  B2_BUCKET           - B2 bucket name (required for sync)"
-echo "  B2_APP_KEY_ID       - B2 account ID"
-echo "  B2_APP_KEY          - B2 application key"
-echo "  B2_MODELS_PATH      - Models path in bucket (default: aitoolkit_models)"
-echo "  B2_DATASETS_PATH    - Datasets path in bucket (default: aitoolkit_datasets)"
-echo "  HF_TOKEN            - HuggingFace token (optional, for gated models)"
+echo "  HF_TOKEN         - HuggingFace token (REQUIRED for gated models)"
+echo "  B2_BUCKET         - B2 bucket name"
+echo "  B2_APP_KEY_ID     - B2 account ID"
+echo "  B2_APP_KEY        - B2 application key"
+echo "  B2_DATASETS_PATH  - Datasets path in bucket (default: aitoolkit_datasets)"
+echo "  B2_CONFIGS_PATH   - Configs path in bucket (default: aitoolkit_configs)"
+echo "  B2_OUTPUTS_PATH   - Outputs path in bucket (default: aitoolkit_outputs)"

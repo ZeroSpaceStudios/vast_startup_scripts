@@ -136,53 +136,76 @@ else
 fi
 
 # ============================================
-# Sync Models from B2
+# Rclone tuning — optimized for large model files over fast datacenter links
+# ============================================
+RCLONE_FLAGS=(
+    --transfers 16              # concurrent file transfers (default: 4)
+    --checkers 16               # concurrent file checks (default: 8)
+    --multi-thread-streams 8    # streams per large file (default: 4)
+    --multi-thread-cutoff 50M   # use multi-thread for files >50MB
+    --buffer-size 64M           # read-ahead buffer (default: 16M)
+    --fast-list                 # batch directory listings (fewer API calls)
+    --b2-download-concurrency 16 # B2-specific parallel chunk downloads
+    --ignore-existing           # skip files already present (saves time on restarts)
+)
+
+# ============================================
+# Sync Models from B2 (parallel)
 # ============================================
 if [ -n "$B2_BUCKET" ]; then
-    echo "=== Syncing Models from B2 ==="
+    echo "=== Syncing Models from B2 (parallel) ==="
+    SYNC_START=$SECONDS
 
-    # Sync each model type folder
-    for model_type in diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models; do
-        echo ""
-        echo "--- Syncing $model_type ---"
-        echo "Source: b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type"
-        echo "Dest:   $WORKSPACE/ComfyUI/models/$model_type"
+    MODEL_TYPES=(diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models)
+    SYNC_PIDS=()
+
+    for model_type in "${MODEL_TYPES[@]}"; do
         mkdir -p "$WORKSPACE/ComfyUI/models/$model_type"
 
-        # List files in bucket before sync
-        echo "Files in bucket:"
-        rclone ls "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
-
-        # Run sync with progress
-        echo "Downloading..."
-        rclone copy "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" "$WORKSPACE/ComfyUI/models/$model_type" --exclude "archive/**" --progress || true
-
-        # Show what was downloaded
-        echo "Local files after sync:"
-        ls -lh "$WORKSPACE/ComfyUI/models/$model_type" 2>/dev/null || echo "  (empty)"
+        # Each model type syncs in its own background process
+        (
+            echo "[sync:$model_type] Starting..."
+            rclone copy "b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type" \
+                "$WORKSPACE/ComfyUI/models/$model_type" \
+                --exclude "archive/**" \
+                "${RCLONE_FLAGS[@]}" 2>&1 || true
+            echo "[sync:$model_type] Done."
+        ) &
+        SYNC_PIDS+=($!)
     done
 
-    echo "=== Model Sync Complete ==="
-
-    # ============================================
-    # Sync Workflows from B2
-    # ============================================
-    echo ""
-    echo "=== Syncing Workflows from B2 ==="
+    # Also sync workflows in parallel with models
     WORKFLOWS_DIR="$WORKSPACE/ComfyUI/user/default/workflows"
     mkdir -p "$WORKFLOWS_DIR"
-    echo "Source: b2:$B2_BUCKET/$B2_WORKFLOWS_PATH"
-    echo "Dest:   $WORKFLOWS_DIR"
+    (
+        echo "[sync:workflows] Starting..."
+        rclone copy "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" "$WORKFLOWS_DIR" \
+            --exclude "archive/**" \
+            "${RCLONE_FLAGS[@]}" 2>&1 || true
+        echo "[sync:workflows] Done."
+    ) &
+    SYNC_PIDS+=($!)
 
-    echo "Files in bucket:"
-    rclone ls "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
+    echo "Waiting for ${#SYNC_PIDS[@]} parallel syncs to finish..."
+    SYNC_FAILED=0
+    for pid in "${SYNC_PIDS[@]}"; do
+        wait "$pid" || ((SYNC_FAILED++))
+    done
 
-    echo "Downloading..."
-    rclone copy "b2:$B2_BUCKET/$B2_WORKFLOWS_PATH" "$WORKFLOWS_DIR" --exclude "archive/**" --progress || true
+    SYNC_ELAPSED=$((SECONDS - SYNC_START))
+    SYNC_MIN=$((SYNC_ELAPSED / 60))
+    SYNC_SEC=$((SYNC_ELAPSED % 60))
+    echo "=== All syncs finished in ${SYNC_MIN}m ${SYNC_SEC}s (${SYNC_FAILED} failures) ==="
 
-    echo "Local workflows after sync:"
-    ls -lh "$WORKFLOWS_DIR" 2>/dev/null || echo "  (empty)"
-    echo "=== Workflow Sync Complete ==="
+    # Summary of what's on disk
+    echo ""
+    echo "--- Local model summary ---"
+    for model_type in "${MODEL_TYPES[@]}"; do
+        COUNT=$(ls -1 "$WORKSPACE/ComfyUI/models/$model_type" 2>/dev/null | wc -l)
+        echo "  $model_type: $COUNT files"
+    done
+    WCOUNT=$(ls -1 "$WORKFLOWS_DIR" 2>/dev/null | wc -l)
+    echo "  workflows: $WCOUNT files"
 else
     echo "Skipping B2 sync (B2_BUCKET not configured)"
 fi
