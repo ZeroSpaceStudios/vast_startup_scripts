@@ -136,6 +136,162 @@ else
 fi
 
 # ============================================
+# Install SageAttention V2 (CUDA kernel build)
+# ============================================
+# SageAttention V2 provides ~35% faster attention for WAN/Flux/etc.
+# Must be built from source — PyPI only has V1 (Triton-only, slower).
+# Built wheel is cached in /workspace/wheels/ so restarts don't rebuild.
+#
+# IMPORTANT: Do NOT use --use-sage-attention CLI flag with ComfyUI.
+# It causes black output with WAN/Qwen models (Triton backend issue).
+# Instead use KJNodes "Patch Sage Attention" node in workflows with
+# backend = sageattn_qk_int8_pv_fp16_cuda
+# ============================================
+install_sageattention() {
+    echo "=== SageAttention V2 Setup ==="
+    local SA_START=$SECONDS
+
+    # --- Already installed? (handles instance restart with persistent env) ---
+    if python -c "import sageattention; print(f'SageAttention {sageattention.__version__} already installed')" 2>/dev/null; then
+        echo "SageAttention already available, skipping build."
+        return 0
+    fi
+
+    # --- nvcc available? (needs devel Docker image with CUDA toolkit) ---
+    export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
+    export PATH="$CUDA_HOME/bin:$PATH"
+    export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+
+    if ! command -v nvcc &>/dev/null; then
+        echo "WARNING: nvcc not found. SageAttention requires CUDA toolkit (devel Docker image)."
+        echo "Skipping SageAttention — ComfyUI will work without it."
+        return 0
+    fi
+    echo "CUDA_HOME=$CUDA_HOME"
+    echo "nvcc: $(nvcc --version | tail -1)"
+
+    # --- Detect GPU compute capability ---
+    local GPU_CC
+    GPU_CC=$(python -c "
+import torch
+if torch.cuda.is_available():
+    major, minor = torch.cuda.get_device_capability(0)
+    print(f'{major}.{minor}')
+else:
+    print('none')
+" 2>/dev/null)
+
+    if [ -z "$GPU_CC" ] || [ "$GPU_CC" = "none" ]; then
+        echo "WARNING: Could not detect GPU compute capability. Skipping SageAttention."
+        return 0
+    fi
+
+    local GPU_NAME
+    GPU_NAME=$(python -c "import torch; print(torch.cuda.get_device_name(0))" 2>/dev/null || echo "unknown")
+    local SM_TAG="sm${GPU_CC//./}"
+    echo "Detected GPU: $GPU_NAME (compute $GPU_CC, $SM_TAG)"
+
+    export TORCH_CUDA_ARCH_LIST="${GPU_CC}+PTX"
+    echo "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
+
+    # --- Cached wheel available? ---
+    local WHEEL_DIR="$WORKSPACE/wheels"
+    mkdir -p "$WHEEL_DIR"
+
+    local CACHED_WHEEL
+    CACHED_WHEEL=$(ls "$WHEEL_DIR"/sageattention-*-"$SM_TAG".whl 2>/dev/null | head -1)
+
+    if [ -n "$CACHED_WHEEL" ]; then
+        echo "Found cached wheel: $(basename "$CACHED_WHEEL")"
+        if pip install "$CACHED_WHEEL" 2>&1; then
+            echo "Installed SageAttention from cached wheel."
+            local SA_ELAPSED=$((SECONDS - SA_START))
+            echo "=== SageAttention setup done in ${SA_ELAPSED}s ==="
+            return 0
+        fi
+        echo "WARNING: Cached wheel install failed, rebuilding from source..."
+        rm -f "$CACHED_WHEEL"
+    fi
+
+    # --- Install triton dependency ---
+    echo "Installing triton..."
+    pip install triton 2>&1
+
+    # --- Build from source (try main repo, then woct0rdho fork) ---
+    local BUILD_DIR="/tmp/sageattention_build"
+    local REPOS=(
+        "https://github.com/thu-ml/SageAttention.git"
+        "https://github.com/woct0rdho/SageAttention.git"
+    )
+
+    export MAX_JOBS=$(nproc)
+    local BUILD_SUCCESS=false
+
+    for repo_url in "${REPOS[@]}"; do
+        echo ""
+        echo "--- Building SageAttention from: $repo_url ---"
+        echo "    MAX_JOBS=$MAX_JOBS, TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
+
+        rm -rf "$BUILD_DIR"
+        if ! git clone --depth 1 "$repo_url" "$BUILD_DIR" 2>&1; then
+            echo "WARNING: Clone failed, trying next repo..."
+            continue
+        fi
+
+        cd "$BUILD_DIR"
+
+        if pip install . --no-build-isolation 2>&1; then
+            echo "Build succeeded, caching wheel..."
+
+            # Cache the wheel for future restarts
+            pip wheel . --no-build-isolation --no-deps -w /tmp/sa_wheel/ 2>&1 || true
+            local BUILT_WHEEL
+            BUILT_WHEEL=$(ls /tmp/sa_wheel/sageattention-*.whl 2>/dev/null | head -1)
+            if [ -n "$BUILT_WHEEL" ]; then
+                local BASE_NAME
+                BASE_NAME=$(basename "$BUILT_WHEEL")
+                cp "$BUILT_WHEEL" "$WHEEL_DIR/${BASE_NAME%.whl}-${SM_TAG}.whl"
+                echo "Cached: $WHEEL_DIR/${BASE_NAME%.whl}-${SM_TAG}.whl"
+            fi
+            rm -rf /tmp/sa_wheel/
+
+            BUILD_SUCCESS=true
+            break
+        else
+            echo "WARNING: Build failed, trying next repo..."
+        fi
+
+        cd "$WORKSPACE/ComfyUI"
+    done
+
+    # --- Cleanup ---
+    rm -rf "$BUILD_DIR"
+    cd "$WORKSPACE/ComfyUI"
+
+    if [ "$BUILD_SUCCESS" = true ]; then
+        python -c "import sageattention; print(f'SageAttention {sageattention.__version__} installed successfully')" 2>&1 || true
+        local SA_ELAPSED=$((SECONDS - SA_START))
+        echo "=== SageAttention V2 build done in ${SA_ELAPSED}s ==="
+    else
+        echo ""
+        echo "WARNING: SageAttention V2 installation failed."
+        echo "ComfyUI will still work — just without SageAttention acceleration."
+        echo "Manual rebuild:"
+        echo "  export CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_LIST=\"${GPU_CC}+PTX\""
+        echo "  pip install triton"
+        echo "  git clone https://github.com/thu-ml/SageAttention.git /tmp/sa"
+        echo "  cd /tmp/sa && MAX_JOBS=\$(nproc) pip install . --no-build-isolation"
+    fi
+}
+
+# Run in subshell so build failures don't abort the startup script (set -e is active)
+(
+    set +e
+    install_sageattention
+) 2>&1
+echo ""
+
+# ============================================
 # Rclone tuning — optimized for large model files over fast datacenter links
 # ============================================
 RCLONE_FLAGS=(
@@ -145,7 +301,6 @@ RCLONE_FLAGS=(
     --multi-thread-cutoff 50M   # use multi-thread for files >50MB
     --buffer-size 64M           # read-ahead buffer (default: 16M)
     --fast-list                 # batch directory listings (fewer API calls)
-    --b2-download-concurrency 16 # B2-specific parallel chunk downloads
     --ignore-existing           # skip files already present (saves time on restarts)
 )
 
