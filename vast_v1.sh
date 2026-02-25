@@ -152,7 +152,7 @@ install_sageattention() {
     local SA_START=$SECONDS
 
     # --- Already installed? (handles instance restart with persistent env) ---
-    if python -c "import sageattention; print(f'SageAttention {sageattention.__version__} already installed')" 2>/dev/null; then
+    if python -c "from sageattention import sageattn; print('SageAttention already installed')" 2>/dev/null; then
         echo "SageAttention already available, skipping build."
         return 0
     fi
@@ -269,7 +269,7 @@ else:
     cd "$WORKSPACE/ComfyUI"
 
     if [ "$BUILD_SUCCESS" = true ]; then
-        python -c "import sageattention; print(f'SageAttention {sageattention.__version__} installed successfully')" 2>&1 || true
+        python -c "from sageattention import sageattn; print('SageAttention V2 installed successfully')" 2>&1 || true
         local SA_ELAPSED=$((SECONDS - SA_START))
         echo "=== SageAttention V2 build done in ${SA_ELAPSED}s ==="
     else
