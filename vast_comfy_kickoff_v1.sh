@@ -38,10 +38,9 @@ CUSTOM_NODES=(
     "https://github.com/ltdrdata/ComfyUI-Manager"
     "https://github.com/rgthree/rgthree-comfy.git"
     "https://github.com/kijai/ComfyUI-KJNodes.git"
-    "https://github.com/chflame163/ComfyUI_LayerStyle.git"
-    #"https://github.com/ShmuelRonen/ComfyUI-VideoUpscale_WithModel.git"
-    #"https://github.com/neonvoid/ComfyUI-GIMM-VFI_nvFork.git"
-    #"https://github.com/neonvoid/ComfyUI-SAM3_nvFork.git"
+    "https://github.com/ShmuelRonen/ComfyUI-VideoUpscale_WithModel.git"
+    "https://github.com/neonvoid/ComfyUI-GIMM-VFI_nvFork.git"
+    "https://github.com/neonvoid/ComfyUI-SAM3_nvFork.git"
     "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
     "https://github.com/neonvoid/NV_Comfy_Utils.git"
     "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git"
@@ -50,6 +49,9 @@ CUSTOM_NODES=(
     "https://github.com/BadCafeCode/masquerade-nodes-comfyui.git"
     "https://github.com/evanspearman/ComfyMath.git"
     "https://github.com/munkyfoot/ComfyUI-TextOverlay.git"
+    "https://github.com/chflame163/ComfyUI_LayerStyle.git"
+    "https://github.com/ltdrdata/was-node-suite-comfyui.git"
+    "https://github.com/crystian/ComfyUI-Crystools.git"
 )
 
 # ============================================

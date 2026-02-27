@@ -71,14 +71,28 @@ tail -f /workspace/comfyui.log
 
 ## SSH Tunnel Disconnected
 
-**Symptom**: Browser shows connection refused on localhost:8189. ComfyUI is still running on the instance, you just lost the tunnel.
+**Symptom**: Browser shows connection refused on localhost:8189. ComfyUI is still running on the instance, you just lost the tunnel. Vast auto-tmux keeps processes alive even when SSH drops.
 
 **Fix** — reconnect from your local machine:
 ```bash
 ssh -p <SSH_PORT> root@<IP> -L 8189:localhost:8188
 ```
 
-Then reopen `http://localhost:8189`. Any running workflow continues — you just lost the live view temporarily.
+**Verify ComfyUI is still running** (on the instance after reconnecting):
+```bash
+# Quick check — prints PID if running, "Not running" if dead
+pgrep -f "python main.py" && echo "Running" || echo "Not running"
+
+# Check recent logs to confirm it's healthy (not stuck/errored)
+tail -20 /workspace/comfyui.log
+```
+
+If it's running, just reopen `http://localhost:8189`. Any running workflow continues — you just lost the live view temporarily.
+
+If it's not running, restart it:
+```bash
+./start_comfy.sh
+```
 
 ---
 
@@ -206,6 +220,49 @@ mv /workspace/ComfyUI/*.json /workspace/ComfyUI/user/default/workflows/
 ```
 
 Refresh the browser — they should appear under the workflow list.
+
+---
+
+## File Transfers (scp)
+
+Transfer files between your local Windows machine and the vast instance.
+
+**Syntax:**
+```
+scp -P <PORT> <source> <destination>
+│    │  │       │        │
+│    │  │       │        └─ where to put it
+│    │  │       └─ what to send
+│    │  └─ SSH port (from vast.ai dashboard)
+│    └─ uppercase P = port (lowercase -p means something else!)
+└─ secure copy command
+```
+
+**Download outputs from instance to local:**
+```bash
+# Download all files from ComfyUI output
+scp -P <PORT> root@<IP>:/workspace/ComfyUI/output/* .
+
+# Download a specific file
+scp -P <PORT> root@<IP>:/workspace/ComfyUI/output/myfile.mp4 .
+```
+
+**Upload local files to instance:**
+```bash
+# Upload to ComfyUI input directory (for use in workflows)
+scp -P <PORT> "Z:\path\to\file.json" root@<IP>:/workspace/ComfyUI/input/
+
+# Upload to any path on the instance
+scp -P <PORT> "Z:\path\to\file.safetensors" root@<IP>:/workspace/ComfyUI/models/loras/
+```
+
+**Notes:**
+- Run these from a local PowerShell/Terminal window, NOT from inside the SSH session
+- Quote Windows paths with spaces or special characters
+- `scp` doesn't skip existing files — it always overwrites. Use `rsync` if you want skip-existing behavior:
+  ```bash
+  rsync -avz --progress -e "ssh -p <PORT>" root@<IP>:/workspace/ComfyUI/output/ .
+  ```
 
 ---
 

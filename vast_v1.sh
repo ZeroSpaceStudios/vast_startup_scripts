@@ -35,6 +35,9 @@ CUSTOM_NODES=(
     "https://github.com/BadCafeCode/masquerade-nodes-comfyui.git"
     "https://github.com/evanspearman/ComfyMath.git"
     "https://github.com/munkyfoot/ComfyUI-TextOverlay.git"
+    "https://github.com/chflame163/ComfyUI_LayerStyle.git"
+    "https://github.com/ltdrdata/was-node-suite-comfyui.git"
+    "https://github.com/crystian/ComfyUI-Crystools.git"
 )
 
 # ============================================
