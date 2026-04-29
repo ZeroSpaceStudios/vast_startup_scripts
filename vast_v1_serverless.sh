@@ -59,7 +59,10 @@ CUSTOM_NODES=(
     "https://github.com/chflame163/ComfyUI_LayerStyle.git"
     "https://github.com/ltdrdata/was-node-suite-comfyui.git"
     "https://github.com/crystian/ComfyUI-Crystools.git"
+    "https://github.com/ZeroSpaceStudios/ComfyUI-AutoVideoMasking.git"
 )
+# NOTE: ComfyUI version is pinned by the vastai/comfy base image tag set in
+# the vast.ai template (e.g., v0.18.2-cuda-12.9-py312). Avoid floating tags.
 
 # ============================================
 # B2 MODEL SYNC CONFIGURATION
@@ -123,6 +126,12 @@ echo ""
 echo "=== Installing Common Python Dependencies ==="
 $PIP_CMD install opencv-python-headless accelerate omegaconf imageio-ffmpeg --no-cache-dir || true
 
+# GIMM-VFI workaround deps (not in the node's requirements.txt)
+# - cupy-cuda12x<14: 14+ requires numpy>=2.0 which conflicts with ComfyUI's numpy 1.26.x
+# - yacs: required by FlowFormer optical flow module
+echo "Installing GIMM-VFI workaround deps..."
+$PIP_CMD install "cupy-cuda12x<14" yacs --no-cache-dir || true
+
 # ============================================
 # Install Custom Nodes
 # ============================================
@@ -173,7 +182,7 @@ if [ -n "$B2_BUCKET" ] && [ -n "$B2_APP_KEY" ]; then
     echo ""
     echo "=== Syncing Models from B2 ==="
 
-    for model_type in diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models; do
+    for model_type in diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models sam3; do
         echo ""
         echo "--- Syncing $model_type ---"
         mkdir -p "$MODELS_DIR/$model_type"
@@ -192,24 +201,7 @@ if [ -n "$B2_BUCKET" ] && [ -n "$B2_APP_KEY" ]; then
 
     echo ""
     echo "=== Model Sync Complete ==="
-
-
-    # ============================================
-    # Sync Input Videos from B2
-    # ============================================
-    echo ""
-    echo "=== Syncing Input Videos from B2 ==="
-    INPUTS_DIR="/workspace/comfy_inputs"
-    mkdir -p "$INPUTS_DIR"
-
-    rclone copy "b2:$B2_BUCKET/comfy_inputs" \
-        "$INPUTS_DIR" \
-        --exclude "archive/**" \
-        --progress || true
-
-    echo "Input videos synced:"
-    ls -lh "$INPUTS_DIR" 2>/dev/null | head -10 || echo "  (empty)"
-    echo "=== Input Sync Complete ==="
+    # Inputs/outputs are no longer B2-synced; transfer via SCP from the client.
 else
     echo ""
     echo "Skipping B2 sync (B2_BUCKET or B2_APP_KEY not configured)"

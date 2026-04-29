@@ -2,15 +2,13 @@
 # =============================================================================
 # VAST.AI INTERACTIVE - ComfyUI Kickoff Script (v1)
 # =============================================================================
-# Based on vast_v1.sh with added support for a second B2 bucket for input files.
+# Based on vast_v1.sh. Models and workflows sync from B2; inputs/outputs are
+# transferred via SCP from the client (see help text at end of script).
 #
 # Environment Variables (set in Vast.ai):
-#   B2_BUCKET         - Primary B2 bucket (models, workflows)
-#   B2_APP_KEY_ID     - Primary B2 account ID (or B2_KEY_ID)
-#   B2_APP_KEY        - Primary B2 application key
-#   INPUT_B2_BUCKET   - Input files B2 bucket name
-#   INPUT_B2_KEY_ID   - Input bucket account ID
-#   INPUT_B2_APP_KEY  - Input bucket application key
+#   B2_BUCKET         - B2 bucket (models, workflows)
+#   B2_APP_KEY_ID     - B2 account ID (or B2_KEY_ID)
+#   B2_APP_KEY        - B2 application key
 # =============================================================================
 
 set -e
@@ -30,6 +28,11 @@ echo "Pip path: $(which pip)"
 WORKSPACE=${WORKSPACE:-/workspace}
 mkdir -p "$WORKSPACE"
 cd "$WORKSPACE"
+
+# ComfyUI version pin — bump deliberately after testing.
+# Matches modal-inference's vastai/comfy:v0.18.2 base image by version name.
+# Latest available is v0.20.1; v0.18.2 chosen for closer modal parity.
+COMFYUI_VERSION="v0.18.2"
 
 # ============================================
 # CUSTOM NODES - Add your GitHub URLs here
@@ -52,6 +55,7 @@ CUSTOM_NODES=(
     "https://github.com/chflame163/ComfyUI_LayerStyle.git"
     "https://github.com/ltdrdata/was-node-suite-comfyui.git"
     "https://github.com/crystian/ComfyUI-Crystools.git"
+    "https://github.com/ZeroSpaceStudios/ComfyUI-AutoVideoMasking.git"
 )
 
 # ============================================
@@ -75,12 +79,10 @@ echo "Installing rclone..."
 curl -s https://rclone.org/install.sh | bash
 
 # ============================================
-# Configure rclone remotes
+# Configure rclone for B2 (models + workflows only)
 # ============================================
 echo "Configuring rclone..."
 mkdir -p ~/.config/rclone
-
-# Primary B2 remote (models, workflows)
 cat > ~/.config/rclone/rclone.conf << EOF
 [b2]
 type = b2
@@ -89,25 +91,10 @@ key = $B2_APP_KEY
 hard_delete = true
 EOF
 
-# Input files B2 remote (separate bucket/credentials)
-if [ -n "$INPUT_B2_APP_KEY" ]; then
-    cat >> ~/.config/rclone/rclone.conf << EOF
-
-[b2-inputs]
-type = b2
-account = ${INPUT_B2_KEY_ID}
-key = ${INPUT_B2_APP_KEY}
-hard_delete = true
-EOF
-    echo "rclone configured: b2 (models) + b2-inputs (input files)"
-else
-    echo "rclone configured: b2 (models only, INPUT_B2_APP_KEY not set)"
-fi
-
 # Clone ComfyUI if not present
-echo "Setting up ComfyUI..."
+echo "Setting up ComfyUI ($COMFYUI_VERSION)..."
 if [ ! -d "$WORKSPACE/ComfyUI" ]; then
-    git clone https://github.com/comfyanonymous/ComfyUI.git
+    git clone --branch "$COMFYUI_VERSION" --depth 1 https://github.com/comfyanonymous/ComfyUI.git
 fi
 
 cd "$WORKSPACE/ComfyUI"
@@ -153,6 +140,13 @@ done
 echo "=== Custom Nodes Installation Complete ==="
 cd "$WORKSPACE/ComfyUI"
 
+# ============================================
+# GIMM-VFI workaround deps (not in node's requirements.txt)
+# - cupy-cuda12x<14: 14+ requires numpy>=2.0 which conflicts with ComfyUI's numpy 1.26.x
+# - yacs: required by FlowFormer optical flow module
+# ============================================
+echo "Installing GIMM-VFI workaround deps..."
+pip install "cupy-cuda12x<14" yacs --no-cache-dir || true
 
 # ============================================
 # Sync Models from B2
@@ -161,7 +155,7 @@ if [ -n "$B2_BUCKET" ]; then
     echo "=== Syncing Models from B2 ==="
 
     # Sync each model type folder
-    for model_type in diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models; do
+    for model_type in diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models sam3; do
         echo ""
         echo "--- Syncing $model_type ---"
         echo "Source: b2:$B2_BUCKET/$B2_MODELS_PATH/$model_type"
@@ -204,35 +198,6 @@ if [ -n "$B2_BUCKET" ]; then
     echo "=== Workflow Sync Complete ==="
 else
     echo "Skipping B2 sync (B2_BUCKET not configured)"
-fi
-
-# ============================================
-# Sync Input Files from Second B2 Bucket
-# ============================================
-if [ -n "$INPUT_B2_BUCKET" ] && [ -n "$INPUT_B2_APP_KEY" ]; then
-    echo ""
-    echo "=== Syncing Input Files from B2 (b2-inputs) ==="
-    INPUTS_DIR="/workspace/comfy_inputs"
-    mkdir -p "$INPUTS_DIR"
-
-    echo "Source: b2-inputs:$INPUT_B2_BUCKET"
-    echo "Dest:   $INPUTS_DIR"
-
-    echo "Files in input bucket:"
-    rclone ls "b2-inputs:$INPUT_B2_BUCKET" --exclude "archive/**" 2>/dev/null || echo "  (empty or not found)"
-
-    echo "Downloading..."
-    rclone copy "b2-inputs:$INPUT_B2_BUCKET" \
-        "$INPUTS_DIR" \
-        --exclude "archive/**" \
-        --progress || true
-
-    echo "Input files synced:"
-    ls -lh "$INPUTS_DIR" 2>/dev/null || echo "  (empty)"
-    echo "=== Input Sync Complete ==="
-else
-    echo ""
-    echo "Skipping input file sync (INPUT_B2_BUCKET or INPUT_B2_APP_KEY not set)"
 fi
 
 ELAPSED=$((SECONDS - START_TIME))
@@ -280,13 +245,17 @@ echo "Then open: http://localhost:8189"
 echo ""
 echo "Note: Use port 8189+ to avoid conflicts with local ComfyUI on 8188"
 echo ""
-echo "Useful commands:"
+echo "Useful commands (on the instance):"
 echo "  View logs:      tail -f /workspace/comfyui.log"
 echo "  Restart:        ./start_comfy.sh"
 echo "  Stop:           pkill -f 'python main.py'"
-echo "  Sync outputs:   rclone copy /workspace/ComfyUI/output b2:\$B2_BUCKET/comfy_outputs/\$(hostname) --progress"
 echo ""
-echo "Input files:      /workspace/comfy_inputs/"
+echo "Transfer files via SCP (run from your local machine):"
+echo "  Push input:   scp -P <SSH_PORT> input.mp4 root@<IP>:/workspace/ComfyUI/input/"
+echo "  Pull output:  scp -P <SSH_PORT> -r root@<IP>:/workspace/ComfyUI/output ./outputs/"
+echo ""
+echo "ComfyUI input dir:  /workspace/ComfyUI/input/"
+echo "ComfyUI output dir: /workspace/ComfyUI/output/"
 echo ""
 echo "Optional env vars for Slack notifications:"
 echo "  SLACK_BOT_TOKEN     - Bot token (xoxb-...)"

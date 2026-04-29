@@ -17,6 +17,11 @@ WORKSPACE=${WORKSPACE:-/workspace}
 mkdir -p "$WORKSPACE"
 cd "$WORKSPACE"
 
+# ComfyUI version pin — bump deliberately after testing.
+# Matches modal-inference's vastai/comfy:v0.18.2 base image by version name.
+# Latest available is v0.20.1; v0.18.2 chosen for closer modal parity.
+COMFYUI_VERSION="v0.18.2"
+
 # ============================================
 # CUSTOM NODES - Add your GitHub URLs here
 # ============================================
@@ -38,6 +43,7 @@ CUSTOM_NODES=(
     "https://github.com/chflame163/ComfyUI_LayerStyle.git"
     "https://github.com/ltdrdata/was-node-suite-comfyui.git"
     "https://github.com/crystian/ComfyUI-Crystools.git"
+    "https://github.com/ZeroSpaceStudios/ComfyUI-AutoVideoMasking.git"
 )
 
 # ============================================
@@ -72,9 +78,9 @@ hard_delete = true
 EOF
 
 # Clone ComfyUI if not present
-echo "Setting up ComfyUI..."
+echo "Setting up ComfyUI ($COMFYUI_VERSION)..."
 if [ ! -d "$WORKSPACE/ComfyUI" ]; then
-    git clone https://github.com/comfyanonymous/ComfyUI.git
+    git clone --branch "$COMFYUI_VERSION" --depth 1 https://github.com/comfyanonymous/ComfyUI.git
 fi
 
 cd "$WORKSPACE/ComfyUI"
@@ -119,6 +125,14 @@ done
 
 echo "=== Custom Nodes Installation Complete ==="
 cd "$WORKSPACE/ComfyUI"
+
+# ============================================
+# GIMM-VFI workaround deps (not in node's requirements.txt)
+# - cupy-cuda12x<14: 14+ requires numpy>=2.0 which conflicts with ComfyUI's numpy 1.26.x
+# - yacs: required by FlowFormer optical flow module
+# ============================================
+echo "Installing GIMM-VFI workaround deps..."
+pip install "cupy-cuda12x<14" yacs --no-cache-dir || true
 
 # ===========================================
 # Configure NV_Comfy_Utils .env (Slack Integration)
@@ -314,7 +328,7 @@ if [ -n "$B2_BUCKET" ]; then
     echo "=== Syncing Models from B2 (parallel) ==="
     SYNC_START=$SECONDS
 
-    MODEL_TYPES=(diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models)
+    MODEL_TYPES=(diffusion_models controlnet clip clip_vision loras text_encoders vae upscale_models sam3)
     SYNC_PIDS=()
 
     for model_type in "${MODEL_TYPES[@]}"; do
@@ -413,11 +427,14 @@ echo "Then open: http://localhost:8189"
 echo ""
 echo "Note: Use port 8189+ to avoid conflicts with local ComfyUI on 8188"
 echo ""
-echo "Useful commands:"
+echo "Useful commands (on the instance):"
 echo "  View logs:      tail -f /workspace/comfyui.log"
 echo "  Restart:        ./start_comfy.sh"
 echo "  Stop:           pkill -f 'python main.py'"
-echo "  Sync outputs:   rclone copy /workspace/ComfyUI/output b2:\$B2_BUCKET/comfy_outputs/\$(hostname) --progress"
+echo ""
+echo "Transfer files via SCP (run from your local machine):"
+echo "  Push input:   scp -P <SSH_PORT> input.mp4 root@<IP>:/workspace/ComfyUI/input/"
+echo "  Pull output:  scp -P <SSH_PORT> -r root@<IP>:/workspace/ComfyUI/output ./outputs/"
 echo ""
 echo "Optional env vars for Slack notifications:"
 echo "  SLACK_BOT_TOKEN     - Bot token (xoxb-...)"
